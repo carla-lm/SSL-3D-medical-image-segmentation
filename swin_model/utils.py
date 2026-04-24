@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from transforms import get_supervised_transforms, get_ssl_transforms, get_byol_transforms
 import copy
 import matplotlib
+
 matplotlib.use("TkAgg")
 
 
@@ -177,8 +178,6 @@ def visualize_mask_overlay(x, mask, recon, filename="overlay.png", save_dir=None
     axs[3].set_title("Adjusted Reconstruction")
     axs[3].axis('off')
 
-
-
     plt.tight_layout()
     # plt.show()
     # Save instead of showing
@@ -234,7 +233,7 @@ def visualize_byol_augmentations(dataset_type, data_dir, roi):
         view1 = view1[3]  # (H, W, D)
         view2 = view2[3]  # (H, W, D)
 
-    else:    # Convert tensors to numpy arrays and discard batch and channel dimensions
+    else:  # Convert tensors to numpy arrays and discard batch and channel dimensions
         base_img = base_img[0].detach().cpu().numpy()  # (C, H, W, D) --> (H, W, D)
         view1 = view1[0].detach().cpu().numpy()  # (C, H, W, D) --> (H, W, D)
         view2 = view2[0].detach().cpu().numpy()  # (C, H, W, D) --> (H, W, D)
