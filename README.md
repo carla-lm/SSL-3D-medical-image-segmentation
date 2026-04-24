@@ -5,8 +5,11 @@ Custom 3D SwinUNETR implementation with self-supervised pre-training (MIM and BY
 ## Datasets
 
 The BraTS 2021 dataset can be found at: https://www.kaggle.com/datasets/dschettler8845/brats-2021-task1
+
 The annotated Selma3D 2024 dataset can be found at: https://www.ebi.ac.uk/biostudies/bioimages/studies/S-BIAD1196
+
 The unannotated Selma3D 2024 dataset can be found at: https://www.ebi.ac.uk/biostudies/bioimages/studies/S-BIAD1197
+
 As the unannotated volumes are too big, smaller 3D patches were subsampled, which can be found at Zenodo:
 - Nuclei patches: https://doi.org/10.5281/zenodo.19020759
 - Vessel patches: https://doi.org/10.5281/zenodo.19020811
