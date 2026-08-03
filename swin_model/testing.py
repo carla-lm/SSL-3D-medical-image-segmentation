@@ -3,6 +3,7 @@ import csv
 import argparse
 import torch
 import numpy as np
+import mlflow
 import matplotlib
 import matplotlib.pyplot as plt
 from collections import defaultdict
@@ -64,6 +65,10 @@ if __name__ == '__main__':
     parser.add_argument('--fold', type=int, default=1)
     parser.add_argument("--ckpt_path", type=str, required=True)
     parser.add_argument("--num_samples", type=int, default=3)
+    # MLflow args
+    parser.add_argument('--use_mlflow', action='store_true') # Only use CSVLogger as default
+    parser.add_argument('--mlflow_tracking_uri', type=str, default="http://127.0.0.1:5000")
+    parser.add_argument('--mlflow_experiment', type=str, default="swinunetr-segmentation")
     args = parser.parse_args()
 
     fold = args.fold
@@ -95,6 +100,27 @@ if __name__ == '__main__':
 
     else:
         raise ValueError("Unknown dataset")
+
+    active_run = None
+    if args.use_mlflow:
+        mlflow.set_tracking_uri(args.mlflow_tracking_uri)
+        mlflow.set_experiment(args.mlflow_experiment)
+        run_name = f"eval_{args.data}_{os.path.basename(args.ckpt_path)}"
+        active_run = mlflow.start_run(run_name=run_name)
+        mlflow.set_tags({
+            "run_type": "evaluation",
+            "eval_ckpt_path": args.ckpt_path,
+            "eval_data": args.data,
+        })
+        mlflow.log_params({
+            "test_data": args.data,
+            "test_test_type": args.test_type,
+            "test_roi": list(roi),
+            "test_fold": fold,
+            "test_ckpt_path": args.ckpt_path,
+            "test_num_samples": args.num_samples,
+        })
+        print(f"MLflow evaluation logging enabled at {args.mlflow_tracking_uri}")
 
     if args.test_type == "visualize":
         # Take just a few random samples
@@ -210,6 +236,26 @@ if __name__ == '__main__':
                           f"Jaccard = {np.mean(jac_scores):.4f} +/- {np.std(jac_scores):.4f} "
                           f"({len(scores)} samples)")
 
+        # Log the evaluation metrics to MLflow
+        if active_run is not None:
+            metrics_to_log = {
+                "test_dice_mean": float(np.mean(all_dice)),
+                "test_dice_std": float(np.std(all_dice)),
+                "test_jaccard_mean": float(np.mean(all_jaccard)),
+                "test_jaccard_std": float(np.std(all_jaccard)),
+                "test_loss_mean": float(np.mean(all_loss)),
+            }
+            if args.data == "brats":
+                metrics_to_log["test_dice_TC"] = float(brats_dice[0])
+                metrics_to_log["test_dice_WT"] = float(brats_dice[1])
+                metrics_to_log["test_dice_ET"] = float(brats_dice[2])
+            if args.data == "selma":
+                for entity in ["Cells", "Nuclei", "Vessels"]:
+                    if entity in entity_dice:
+                        metrics_to_log[f"test_dice_{entity}"] = float(np.mean(entity_dice[entity]))
+                        metrics_to_log[f"test_jaccard_{entity}"] = float(np.mean(entity_jaccard[entity]))
+            mlflow.log_metrics(metrics_to_log)
+
         # Save results to CSV
         os.makedirs("testing", exist_ok=True)
         csv_path = f"testing/test_results_{args.data}.csv"
@@ -234,3 +280,11 @@ if __name__ == '__main__':
                         writer.writerow([f"jaccard_{entity}", f"{np.mean(jac_scores):.4f}", f"{np.std(jac_scores):.4f}", len(jac_scores)])
 
         print(f"\nResults saved to {csv_path}")
+
+        # Attach the CSV as an MLflow artifact
+        if active_run is not None:
+            mlflow.log_artifact(csv_path)
+
+    # End the MLflow run
+    if active_run is not None:
+        mlflow.end_run()

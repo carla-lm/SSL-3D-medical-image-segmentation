@@ -4,7 +4,7 @@ import argparse
 import torch
 import numpy as np
 import pytorch_lightning as pl
-from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.loggers import CSVLogger, MLFlowLogger
 from functools import partial
 from monai.transforms import (AsDiscrete, Activations)
 from monai.losses import DiceLoss, DiceCELoss
@@ -38,7 +38,9 @@ class LitSwinUNETR(pl.LightningModule):
         self.model_inferer = partial(sliding_window_inference, roi_size=roi, sw_batch_size=sw_batch_size,
                                      predictor=self.model, overlap=infer_overlap)
 
-        self.save_hyperparameters()  # This saves everything to the checkpoint
+        # This saves everything to the checkpoint, MLFlowLogger will auto-log these. When executing locally, should put
+        # self.save_hyperparameters(ignore=['model']) as it will cause it to get stuck writing the model to yaml if not
+        self.save_hyperparameters()
 
     def forward(self, x):
         return self.model(x)
@@ -111,6 +113,10 @@ if __name__ == '__main__':
     parser.add_argument("--train_fraction", type=float, default=1.0)
     parser.add_argument('--experiment', type=int, required=True)
     parser.add_argument('--data', type=str, required=True)
+    # MLflow args
+    parser.add_argument('--mlflow_tracking_uri', type=str, default="http://127.0.0.1:5000")
+    parser.add_argument('--mlflow_experiment', type=str, default="swinunetr-segmentation")
+    parser.add_argument('--use_mlflow', action='store_true')  # Only use CSVLogger as default
     args = parser.parse_args()
 
     # Define hyperparameters
@@ -194,16 +200,32 @@ if __name__ == '__main__':
         exp_dir = os.path.dirname(version_parent)  # Experiment_X
         exp_name = os.path.basename(exp_dir)  # Experiment_X
         save_dir = os.path.dirname(exp_dir)  # checkpoints
-        logger = CSVLogger(save_dir=save_dir,
-                           name=f"{exp_name}/{data_name}",
-                           version=new_version)
-        check_dir = logger.log_dir
+        csv_logger = CSVLogger(save_dir=save_dir,
+                               name=f"{exp_name}/{data_name}",
+                               version=new_version)
+        check_dir = csv_logger.log_dir
+        mlflow_run_name = f"exp{experiment}_{args.data}_{new_version}"
     else:
-        logger = CSVLogger(save_dir="checkpoints", name=run_name)
-        check_dir = logger.log_dir
+        csv_logger = CSVLogger(save_dir="checkpoints", name=run_name)
+        check_dir = csv_logger.log_dir
+        mlflow_run_name = f"exp{experiment}_{args.data}_{os.path.basename(check_dir)}"
 
     print(f"Saving at {check_dir}")
     os.makedirs(check_dir, exist_ok=True)
+
+    # The MLflow logger runs alongside CSVLogger if enabled
+    # Lightning auto-logs every self.log(...) call to it, and auto-logs anything in
+    # self.save_hyperparameters() at the start of training
+    mlflow_logger = None
+    loggers = [csv_logger]
+    if args.use_mlflow:
+        mlflow_logger = MLFlowLogger(
+            experiment_name=args.mlflow_experiment,
+            run_name=mlflow_run_name,
+            tracking_uri=args.mlflow_tracking_uri,
+        )
+        loggers.append(mlflow_logger)
+        print(f"MLflow training logging enabled at {args.mlflow_tracking_uri}")
 
     # Save best model
     best_check = pl.callbacks.ModelCheckpoint(
@@ -240,9 +262,17 @@ if __name__ == '__main__':
         devices="auto",
         strategy="auto",
         callbacks=[best_check, last_check],
-        logger=logger,
+        logger=loggers,
         check_val_every_n_epoch=val_every,
         precision="16-mixed",  # Automatic mixed precision for faster training
     )
 
     trainer.fit(lit_model, train_loader, val_loader, ckpt_path=resume_ckpt)
+
+    # Log the best checkpoint file as an MLflow artifact
+    if mlflow_logger is not None:
+        best_ckpt_path = best_check.best_model_path
+        if best_ckpt_path and os.path.exists(best_ckpt_path):
+            mlflow_client = mlflow_logger.experiment
+            mlflow_client.log_artifact(mlflow_logger.run_id, best_ckpt_path)
+            print(f"Logged best checkpoint to MLflow run {mlflow_logger.run_id}")

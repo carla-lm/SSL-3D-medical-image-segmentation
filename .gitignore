@@ -25,3 +25,5 @@ requirements_conda.txt
 /swin_model/Final_Results
 /swin_model/testing
 swin_model/metrics_merge.py
+swin_model/.idea/inspectionProfiles/profiles_settings.xml
+/swin_model/.idea
